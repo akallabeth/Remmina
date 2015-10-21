@@ -372,11 +372,9 @@ static gboolean remmina_rdp_event_on_button(GtkWidget* widget, GdkEventButton* e
 {
 	TRACE_CALL("remmina_rdp_event_on_button");
 	gint flag;
+	gboolean extended = FALSE;
+	gboolean wheel = FALSE;
 	RemminaPluginRdpEvent rdp_event = { 0 };
-
-	/* We only accept 3 buttons */
-	if ((event->button < 1) || (event->button > 3))
-		return FALSE;
 
 	/* We bypass 2button-press and 3button-press events */
 	if ((event->type != GDK_BUTTON_PRESS) && (event->type != GDK_BUTTON_RELEASE))
@@ -393,13 +391,45 @@ static gboolean remmina_rdp_event_on_button(GtkWidget* widget, GdkEventButton* e
 	switch (event->button)
 	{
 		case 1:
-			flag |= PTR_FLAGS_BUTTON1;
+			flag = PTR_FLAGS_DOWN | PTR_FLAGS_BUTTON1;
 			break;
+
 		case 2:
-			flag |= PTR_FLAGS_BUTTON3;
+			flag = PTR_FLAGS_DOWN | PTR_FLAGS_BUTTON3;
 			break;
+
 		case 3:
-			flag |= PTR_FLAGS_BUTTON2;
+			flag = PTR_FLAGS_DOWN | PTR_FLAGS_BUTTON2;
+			break;
+
+		case 4:
+			wheel = TRUE;
+			flag = PTR_FLAGS_WHEEL | 0x0078;
+			break;
+
+		case 5:
+			wheel = TRUE;
+			flag = PTR_FLAGS_WHEEL | PTR_FLAGS_WHEEL_NEGATIVE | 0x0088;
+			break;
+
+		case 6:		/* wheel left or back */
+		case 8:		/* back */
+		case 97:	/* Xming */
+			extended = TRUE;
+			flag = PTR_XFLAGS_DOWN | PTR_XFLAGS_BUTTON1;
+			break;
+
+		case 7:		/* wheel right or forward */
+		case 9:		/* forward */
+		case 112:	/* Xming */
+			extended = TRUE;
+			flag = PTR_XFLAGS_DOWN | PTR_XFLAGS_BUTTON2;
+			break;
+
+		default:
+			event->x = 0;
+			event->y = 0;
+			flag = 0;
 			break;
 	}
 
