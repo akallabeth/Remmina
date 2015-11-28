@@ -62,11 +62,16 @@ endif()
 
 add_subdirectory(xdmcp)
 
+# X2GO
 find_program(PYHOCA_EXECUTABLE pyhoca-cli)
+find_program(XEPHYR_EXECUTABLE Xephyr)
 
-if(PYHOCA_EXECUTABLE)
+if(PYHOCA_EXECUTABLE AND XEPHYR_EXECUTABLE)
+	message(STATUS "pyhoca-cli and/or Xephyr were found. The X2Go plugin will be installed")
 	add_subdirectory(x2go)
-endif(PYHOCA_EXECUTABLE)
+else()
+	message(WARNING "pyhoca-cli and/or Xephyr were not found. X2GO Plugin won't be built")
+endif()
 
 find_suggested_package(FREERDP)
 if(FREERDP_FOUND)

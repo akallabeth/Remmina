@@ -1,8 +1,6 @@
 /*
- *     Project: Remmina Plugin X2Go
- * Description: Remmina protocol plugin to connect via X2Go using PyHoca
- *              Based on Fabio Castelli Team Viewer Plugin
- *              Copyright: 2013-2014 Fabio Castelli (Muflone)
+ *     Project: Remmina Plugin Gnome libsecret
+ * Description: Remmina protocol plugin to use gnome-libsecret
  *      Author: Antenore Gatta <antenore@simbiosi.org>
  *   Copyright: 2015 Antenore Gatta
  *     License: GPL-2+
@@ -37,11 +35,11 @@
  *
  */
 
-#ifndef __PLUGIN_CONFIG_H
-	#define __PLUGIN_CONFIG_H
+#ifndef __BACKEND_LIBSECRET_H__
+#define __BACKEND_LIBSECRET_H__
 
-	#define PLUGIN_NAME        "X2GO"
-	#define PLUGIN_DESCRIPTION "X2GO - Launch a X2Go connection"
-	#define PLUGIN_VERSION     VERSION      /* Remmina version */
-	#define PLUGIN_APPICON     "x2goclient"
-#endif
+#include <libsecret/secret.h>
+#include <glib.h>
+
+
+#endif // __BACKEND_LIBSECRET_H__

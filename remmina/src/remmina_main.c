@@ -68,8 +68,7 @@ static GtkTargetEntry remmina_drop_types[] =
 	{ "text/uri-list", 0, 1 }
 };
 
-static char *quick_connect_plugin_list[] =
-{
+static char *quick_connect_plugin_list[] = {
 	"RDP", "VNC", "SSH", "NX", "X2GO"
 };
 
