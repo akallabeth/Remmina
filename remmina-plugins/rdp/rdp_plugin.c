@@ -137,9 +137,17 @@ int rf_queue_ui(RemminaProtocolWidget* gp, RemminaPluginRdpUiObject* ui)
 
 	LOCK_BUFFER(TRUE)
 	g_async_queue_push(rfi->ui_queue, ui);
-	if (!rfi->ui_handler)
-		rfi->ui_handler = IDLE_ADD((GSourceFunc) remmina_rdp_event_queue_ui, gp);
-	UNLOCK_BUFFER(TRUE)
+
+	if (remmina_plugin_service->is_main_thread()) {
+		/* in main thread we call directly */
+		UNLOCK_BUFFER(TRUE)
+		remmina_rdp_event_queue_ui(gp);
+	} else {
+		/* in a subthread, we schedule the call, if not already scheduled */
+		if (!rfi->ui_handler)
+			rfi->ui_handler = IDLE_ADD((GSourceFunc) remmina_rdp_event_queue_ui, gp);
+		UNLOCK_BUFFER(TRUE)
+	}
 
 	if (ui_sync_save) {
 		/* Wait for main thread function completion before returning */
@@ -365,17 +373,6 @@ static BOOL remmina_rdp_post_connect(freerdp* instance)
 
 	pointer_cache_register_callbacks(instance->update);
 
-/*
-	if (rfi->sw_gdi != TRUE)
-	{
-		glyph_cache_register_callbacks(instance->update);
-		brush_cache_register_callbacks(instance->update);
-		bitmap_cache_register_callbacks(instance->update);
-		offscreen_cache_register_callbacks(instance->update);
-		palette_cache_register_callbacks(instance->update);
-	}
-*/
-
 	instance->update->BeginPaint = rf_begin_paint;
 	instance->update->EndPaint = rf_end_paint;
 	instance->update->DesktopResize = rf_desktop_resize;
@@ -424,10 +421,9 @@ static BOOL remmina_rdp_authenticate(freerdp* instance, char** username, char** 
 		save = remmina_plugin_service->protocol_plugin_init_get_savepassword(gp);
 		if (save)
 		{
-			// User has requested to save password. We put all the new cretentials
-			// into remminafile->settings. They will be saved later, when disconnecting, by
-			// remmina_connection_object_on_disconnect of remmina_connection_window.c
-			// (this operation should be called "save credentials" and not "save password")
+			// User has requested to save credentials. We put all the new cretentials
+			// into remminafile->settings. They will be saved later, on successful connection, by
+			// remmina_connection_window.c
 
 			remmina_plugin_service->file_set_string( remminafile, "username", s_username );
 			remmina_plugin_service->file_set_string( remminafile, "password", s_password );
@@ -467,7 +463,8 @@ static BOOL remmina_rdp_verify_certificate(freerdp* instance, char* subject, cha
 
 	return False;
 }
-static BOOL remmina_rdp_verify_changed_certificate(freerdp* instance, char* subject, char* issuer, char* new_fingerprint, char* old_fingerprint)
+static BOOL remmina_rdp_verify_changed_certificate(freerdp* instance, char* subject, char* issuer,
+	char* new_fingerprint, char* old_subject, char* old_issuer, char* old_fingerprint)
 {
 	TRACE_CALL("remmina_rdp_verify_changed_certificate");
 	gint status;
@@ -1162,9 +1159,7 @@ static gboolean remmina_rdp_close_connection(RemminaProtocolWidget* gp)
 
 	}
 
-	pthread_mutex_destroy(&rfi->mutex);
 
-	remmina_rdp_event_uninit(gp);
 	remmina_plugin_service->protocol_plugin_emit_signal(gp, "disconnect");
 
 	if (instance)
@@ -1177,29 +1172,47 @@ static gboolean remmina_rdp_close_connection(RemminaProtocolWidget* gp)
 		}
 	}
 
-	remmina_rdp_clipboard_free(rfi);
+	if (rfi->hdc) {
+		gdi_DeleteDC(rfi->hdc);
+		rfi->hdc = NULL;
+	}
 
+	remmina_rdp_clipboard_free(rfi);
 	if (rfi->rfx_context)
 	{
 		rfx_context_free(rfi->rfx_context);
 		rfi->rfx_context = NULL;
 	}
 
+	/* We allocated CertificateName with strdup, so we must free it */
+	if (rfi->settings->CertificateName)
+		free(rfi->settings->CertificateName);
+
 	if (instance)
 	{
-		/* Remove instance->context from gp object data to avoid double free */
-		g_object_steal_data(G_OBJECT(gp), "plugin-data");
-
+		gdi_free(instance);
+		cache_free(instance->context->cache);
+		instance->context->cache = NULL;
+		freerdp_clrconv_free(rfi->clrconv);
+		rfi->clrconv = NULL;
 		if (instance->context->channels) {
 			freerdp_channels_free(instance->context->channels);
 			instance->context->channels = NULL;
 		}
+	}
 
+	pthread_mutex_destroy(&rfi->mutex);
+
+	/* Destroy event queue. Pending async events will be discarded. Should we flush it ? */
+	remmina_rdp_event_uninit(gp);
+
+	if (instance) {
 		freerdp_context_free(instance); /* context is rfContext* rfi */
 		freerdp_free(instance); /* This implicitly frees instance->context and rfi is no longer valid */
-		g_object_set_data(G_OBJECT(gp), "plugin-data", NULL);	/* Removes rfi */
-
 	}
+
+	/* Remove instance->context from gp object data to avoid double free */
+	g_object_steal_data(G_OBJECT(gp), "plugin-data");
 
 	return FALSE;
 }

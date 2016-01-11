@@ -818,9 +818,6 @@ static void remmina_connection_holder_check_resize(RemminaConnectionHolder* cnnh
 		}
 		else
 		{
-			gtk_window_set_default_size (GTK_WINDOW(cnnhld->cnnwin),
-			                             remmina_file_get_int (cnnobj->remmina_file, "window_width", 640),
-			                             remmina_file_get_int (cnnobj->remmina_file, "window_height", 480));
 			if (remmina_file_get_int (cnnobj->remmina_file, "window_maximize", FALSE))
 			{
 				gtk_window_maximize (GTK_WINDOW(cnnhld->cnnwin));
@@ -1424,7 +1421,7 @@ static void remmina_connection_holder_toolbar_tools(GtkWidget* widget, RemminaCo
 	RemminaConnectionWindowPriv* priv = cnnhld->cnnwin->priv;
 	const RemminaProtocolFeature* feature;
 	GtkWidget* menu;
-	GtkWidget* menuitem;
+	GtkWidget* menuitem = NULL;
 	GtkMenu *submenu_keystrokes;
 	const gchar* domain;
 	gboolean enabled;
@@ -1741,6 +1738,7 @@ static void remmina_connection_holder_update_toolbar(RemminaConnectionHolder* cn
 	RemminaConnectionWindowPriv* priv = cnnhld->cnnwin->priv;
 	GtkToolItem* toolitem;
 	gboolean bval;
+	gboolean test_floating_toolbar;
 
 	remmina_connection_holder_update_toolbar_autofit_button(cnnhld);
 
@@ -1774,10 +1772,11 @@ static void remmina_connection_holder_update_toolbar(RemminaConnectionHolder* cn
 	gtk_window_set_title(GTK_WINDOW(cnnhld->cnnwin), remmina_file_get_string(cnnobj->remmina_file, "name"));
 
 #if FLOATING_TOOLBAR_WIDGET
-	if (priv->floating_toolbar_widget)
+	test_floating_toolbar = (priv->floating_toolbar_widget != NULL);
 #else
-	if (priv->floating_toolbar_window)
+	test_floating_toolbar = (priv->floating_toolbar_window != NULL);
 #endif
+	if (test_floating_toolbar)
 	{
 		gtk_label_set_text(GTK_LABEL(priv->floating_toolbar_label),
 		                   remmina_file_get_string(cnnobj->remmina_file, "name"));
@@ -2376,26 +2375,44 @@ static void remmina_connection_window_initialize_notebook(GtkNotebook* to, GtkNo
 	GtkWidget* widget;
 	RemminaConnectionObject* tc;
 
-	/* Init connection */
 	if (cnnobj)
 	{
-		/* Initial connection for a newly created window */
-		tab = remmina_connection_object_create_tab(cnnobj);
-		remmina_connection_object_append_page(cnnobj, to, tab, view_mode);
+		/* Search cnnobj in the "from" notebook */
+		tc = NULL;
+		if (from) {
+			n = gtk_notebook_get_n_pages(from);
+			for (i = 0; i < n; i++)
+			{
+				widget = gtk_notebook_get_nth_page(from, i);
+				tc = (RemminaConnectionObject*) g_object_get_data(G_OBJECT(widget), "cnnobj");
+				if (tc == cnnobj)
+					break;
+			}
+		}
+		if (tc) {
+			/* if cnnobj is already in the "from" notebook, we should be in the drag and drop case.
+			 * just... do not move it. GTK will do the move when the create-window signal
+			 * of GtkNotebook will return */
 
-		G_GNUC_BEGIN_IGNORE_DEPRECATIONS
-		gtk_widget_reparent(cnnobj->viewport, cnnobj->scrolled_container);
-		G_GNUC_END_IGNORE_DEPRECATIONS
+		} else {
+			/* cnnobj is not on the "from" notebook. This is a new connection for a newly created window */
+			tab = remmina_connection_object_create_tab(cnnobj);
+			remmina_connection_object_append_page(cnnobj, to, tab, view_mode);
 
-		if (cnnobj->window)
-		{
-			gtk_widget_destroy(cnnobj->window);
-			cnnobj->window = NULL;
+			G_GNUC_BEGIN_IGNORE_DEPRECATIONS
+			gtk_widget_reparent(cnnobj->viewport, cnnobj->scrolled_container);
+			G_GNUC_END_IGNORE_DEPRECATIONS
+
+			if (cnnobj->window)
+			{
+				gtk_widget_destroy(cnnobj->window);
+				cnnobj->window = NULL;
+			}
 		}
 	}
 	else
 	{
-		/* View mode changed. Migrate all existing connections to the new notebook */
+		/* cnnobj=null: migrate all existing connections to the new notebook */
 		if (from != NULL && GTK_IS_NOTEBOOK(from))
 		{
 			c = gtk_notebook_get_current_page(from);
@@ -2474,7 +2491,6 @@ static void remmina_connection_holder_on_switch_page(GtkNotebook* notebook, GtkW
 	}
 }
 
-
 static void remmina_connection_holder_on_page_added(GtkNotebook* notebook, GtkWidget* child, guint page_num,
         RemminaConnectionHolder* cnnhld)
 {
@@ -2497,13 +2513,14 @@ static void remmina_connection_holder_on_page_removed(GtkNotebook* notebook, Gtk
 GtkNotebook*
 remmina_connection_holder_on_notebook_create_window(GtkNotebook* notebook, GtkWidget* page, gint x, gint y, gpointer data)
 {
+	/* This signal callback is called by GTK when a detachable tab is dropped on the root window */
+
 	TRACE_CALL("remmina_connection_holder_on_notebook_create_window");
 	RemminaConnectionWindow* srccnnwin;
 	RemminaConnectionWindow* dstcnnwin;
 	RemminaConnectionObject* cnnobj;
 	gint srcpagenum;
 	GdkWindow* window;
-
 
 	GdkDeviceManager* manager;
 	GdkDevice* device = NULL;
@@ -2532,15 +2549,10 @@ remmina_connection_holder_on_notebook_create_window(GtkNotebook* notebook, GtkWi
 		cnnobj->cnnhld = g_new0(RemminaConnectionHolder, 1);
 		if (!cnnobj->cnnhld->cnnwin)
 		{
-			/* Create a new scrolled window to accomodate the dropped connection */
-			remmina_connection_holder_create_scrolled(cnnobj->cnnhld, NULL);
-
-			/* We must resize the new window here: remmina_connection_holder_check_resize() failed
-			 * to set initial size because it has no notebook page on the window. So, we do resize
-			 * manually here */
-			gtk_window_resize( GTK_WINDOW(cnnobj->cnnhld->cnnwin),
-			                   remmina_file_get_int (cnnobj->remmina_file, "window_width", 640),
-			                   remmina_file_get_int (cnnobj->remmina_file, "window_height", 480));
+			/* Create a new scrolled window to accomodate the dropped connection
+			 * and move our cnnobj there */
+			cnnobj->cnnhld->cnnwin = srccnnwin;
+			remmina_connection_holder_create_scrolled(cnnobj->cnnhld, cnnobj);
 		}
 	}
 
@@ -2580,13 +2592,36 @@ static void remmina_connection_holder_create_scrolled(RemminaConnectionHolder* c
 	GtkWidget* grid;
 	GtkWidget* toolbar;
 	GtkWidget* notebook;
+	GList *chain;
 	gchar* tag;
+	int newwin_width, newwin_height;
 
 	oldwindow = GTK_WIDGET(cnnhld->cnnwin);
 	window = remmina_connection_window_new_from_holder(cnnhld);
 	gtk_widget_realize(window);
 	cnnhld->cnnwin = REMMINA_CONNECTION_WINDOW(window);
 
+
+	newwin_width = newwin_height = 100;
+	if (cnnobj) {
+		/* If we have a cnnobj as a reference for this window, we can setup its default size here */
+		newwin_width = remmina_file_get_int (cnnobj->remmina_file, "window_width", 640);
+		newwin_height = remmina_file_get_int (cnnobj->remmina_file, "window_height", 480);
+	} else {
+		/* Try to get a temporary RemminaConnectionObject from the old window and get
+		 * a remmina_file and width/height */
+		int np;
+		GtkWidget* page;
+		RemminaConnectionObject* oldwindow_currentpage_cnnobj;
+
+		np = gtk_notebook_get_current_page(GTK_NOTEBOOK (REMMINA_CONNECTION_WINDOW(oldwindow)->priv->notebook));
+		page = gtk_notebook_get_nth_page (GTK_NOTEBOOK (REMMINA_CONNECTION_WINDOW(oldwindow)->priv->notebook), np);
+		oldwindow_currentpage_cnnobj = (RemminaConnectionObject*) g_object_get_data(G_OBJECT(page),"cnnobj");
+		newwin_width = remmina_file_get_int (oldwindow_currentpage_cnnobj->remmina_file, "window_width", 640);
+		newwin_height = remmina_file_get_int (oldwindow_currentpage_cnnobj->remmina_file, "window_height", 480);
+	}
+
+	gtk_window_set_default_size (GTK_WINDOW(cnnhld->cnnwin), newwin_width, newwin_height);
 
 	/* Create the toolbar */
 	toolbar = remmina_connection_holder_create_toolbar(cnnhld, SCROLLED_WINDOW_MODE);
@@ -2606,7 +2641,9 @@ static void remmina_connection_holder_create_scrolled(RemminaConnectionHolder* c
 
 	gtk_container_add(GTK_CONTAINER(window), grid);
 
-	gtk_container_set_focus_chain(GTK_CONTAINER(grid), g_list_append(NULL, notebook));
+	chain = g_list_append(NULL, notebook);
+	gtk_container_set_focus_chain(GTK_CONTAINER(grid), chain);
+	g_list_free(chain);
 
 	/* Add drag capabilities to the toolbar */
 	gtk_drag_source_set(GTK_WIDGET(toolbar), GDK_BUTTON1_MASK,
@@ -2636,7 +2673,9 @@ static void remmina_connection_holder_create_scrolled(RemminaConnectionHolder* c
 
 	if (cnnobj)
 	{
-		remmina_connection_window_update_tag(cnnhld->cnnwin, cnnobj);
+		if (!oldwindow)
+			remmina_connection_window_update_tag(cnnhld->cnnwin, cnnobj);
+
 		if (remmina_file_get_int(cnnobj->remmina_file, "window_maximize", FALSE))
 		{
 			gtk_window_maximize(GTK_WINDOW(cnnhld->cnnwin));
@@ -2647,13 +2686,13 @@ static void remmina_connection_holder_create_scrolled(RemminaConnectionHolder* c
 	{
 		tag = g_strdup((gchar*) g_object_get_data(G_OBJECT(oldwindow), "tag"));
 		g_object_set_data_full(G_OBJECT(cnnhld->cnnwin), "tag", tag, (GDestroyNotify) g_free);
-		gtk_widget_destroy(oldwindow);
+		if(!cnnobj)
+			gtk_widget_destroy(oldwindow);
 	}
 
 	remmina_connection_holder_update_toolbar(cnnhld);
 	remmina_connection_holder_showhide_toolbar(cnnhld, FALSE);
 	remmina_connection_holder_check_resize(cnnhld);
-
 
 }
 
@@ -3096,6 +3135,9 @@ static void remmina_connection_object_on_connect(RemminaProtocolWidget* gp, Remm
 	GtkWidget* tab;
 	gint i;
 
+	/* This signal handler is called by a plugin where it's correctly connected
+	 * (and authenticated) */
+
 	if (!cnnobj->cnnhld)
 	{
 		cnnwin = remmina_connection_window_find(cnnobj->remmina_file);
@@ -3125,6 +3167,9 @@ static void remmina_connection_object_on_connect(RemminaProtocolWidget* gp, Remm
 		remmina_pref_add_recent(remmina_file_get_string(cnnobj->remmina_file, "protocol"),
 		                        remmina_file_get_string(cnnobj->remmina_file, "server"));
 	}
+
+	/* Save credentials */
+	remmina_file_save_group(cnnobj->remmina_file, REMMINA_SETTING_GROUP_CREDENTIAL);
 
 	if (!cnnhld->cnnwin)
 	{
